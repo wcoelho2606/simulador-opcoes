@@ -3,8 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador Quantitativo de Opções</title>
-    <!-- Biblioteca de Gráficos Plotly (CDN correto) -->
+    <title>Sistema de Sinais Quantitativos de Opções</title>
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>
         body { background-color: #0d0e12; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; }
@@ -16,13 +15,32 @@
         input:focus, select:focus { border-color: #ffb703; }
         input.invalido { border-color: #ef476f; }
         #avisos { display: none; background: #2a1418; border: 1px solid #ef476f; color: #ff9fb0; padding: 12px 15px; border-radius: 6px; margin-bottom: 15px; font-size: 13px; }
+        
+        /* Novo Painel de Sinais */
+        .painel-sinais { background: #1c2333; border: 1px solid #343e56; padding: 15px 20px; border-radius: 8px; margin-bottom: 20px; display: flex; justify-content: space-between; align-items: center; }
+        .sinal-status { font-size: 18px; font-weight: bold; padding: 8px 15px; border-radius: 6px; text-align: center; }
+        .sinal-neutro { background: #343e56; color: #fff; }
+        .sinal-compra { background: #06d6a0; color: #0d0e12; }
+        .sinal-alerta { background: #ef476f; color: #fff; }
+        .sinal-detalhes { font-size: 13px; color: #8a99ad; }
+
         #grafico { background: #161a23; border-radius: 8px; padding: 10px; border: 1px solid #242b3d; min-height: 650px; }
         .ticker-preco { background: #1c2333; color: #06d6a0; font-weight: bold; padding: 10px; border-radius: 4px; text-align: center; border: 1px solid #343e56; align-self: end; font-size: 15px; }
     </style>
 </head>
 <body>
 <div class="container">
-    <h2>Simulador Quantitativo de Opções (LIVE)</h2>
+    <h2>Sistema de Sinais Quantitativos de Opções (LIVE)</h2>
+    
+    <!-- Novo Bloco de Sinais para Entrada no Mercado -->
+    <div class="painel-sinais">
+        <div>
+            <label>Gatilho Operacional Automatizado</label>
+            <div id="texto-estrategia" class="sinal-detalhes">Analisando condições de mercado e gregas...</div>
+        </div>
+        <div id="badge-sinal" class="sinal-status sinal-neutro">AGUARDANDO</div>
+    </div>
+
     <div class="painel-controles">
         <div class="controle">
             <label for="ativo">Ativo Alvo</label>
@@ -78,12 +96,10 @@ const configuracaoAtivos = {
     xauusd:  { minX: 4200,   maxX: 4600,    passo: 4,     legenda: "Preço do Ouro (USD)" }
 };
 
-// --- VALIDAÇÃO DOS CAMPOS ---
 function validarCampos(K, dias, juros, vol) {
     const erros = [];
     const invalidos = { strike: false, dias: false, juros: false, vol: false };
-
-    if (isNaN(K) || K <= 0) { erros.push('O preço de exercício (K) precisa ser um número maior que zero.'); invalidos.strike = true; }
+    if (isNaN(K) || K <= 0) { erros.push('O preço de exercício (K) precisa ser maior que zero.'); invalidos.strike = true; }
     if (isNaN(dias) || dias <= 0) { erros.push('Os dias para o vencimento precisam ser maiores que zero.'); invalidos.dias = true; }
     if (isNaN(vol) || vol <= 0) { erros.push('A volatilidade implícita precisa ser maior que zero.'); invalidos.vol = true; }
     if (isNaN(juros)) { erros.push('A taxa de juros precisa ser um número.'); invalidos.juros = true; }
@@ -104,8 +120,45 @@ function validarCampos(K, dias, juros, vol) {
     return erros.length === 0;
 }
 
+// --- NOVO: Motor de Decisão e Geração de Sinal ---
+function avaliarSinalMercado(S, K, gregasAtuais, tipoOpcao, dias) {
+    const badge = document.getElementById('badge-sinal');
+    const texto = document.getElementById('texto-estrategia');
+    
+    const distanciaPct = ((S - K) / K) * 100;
+    let acao = "NEUTRO";
+    let classeCss = "sinal-neutro";
+    let desc = "";
+
+    // Regras quantitativas de exemplo para entrada
+    if (dias <= 15) {
+        acao = "ALERTA: EXpIRAÇÃO PRÓXIMA";
+        classeCss = "sinal-alerta";
+        desc = "Risco elevado de decaimento temporal acelerado (Theta). Evite compra seca.";
+    } else if (Math.abs(distanciaPct) <= 1.0) {
+        acao = tipoOpcao === 'call' ? "OPORTUNIDADE: COMPRA DE CALL (ATM)" : "OPORTUNIDADE: COMPRA DE PUT (ATM)";
+        classeCss = "sinal-compra";
+        desc = `Ativo muito próximo ao Strike (${distanciaPct.toFixed(2)}%). Gamma elevado, ideal para direcional com alta aceleração.`;
+    } else if (distanciaPct > 3.0 && tipoOpcao === 'call') {
+        acao = "MERCADO ESTICADO (ITM)";
+        classeCss = "sinal-alerta";
+        desc = "Call profundamente no dinheiro. Custo de oportunidade alto e menor alavancagem percentual.";
+    } else if (distanciaPct < -3.0 && tipoOpcao === 'put') {
+        acao = "MERCADO ESTICADO (ITM)";
+        classeCss = "sinal-alerta";
+        desc = "Put profundamente no dinheiro. Prêmio caro e baixa sensibilidade marginal.";
+    } else {
+        acao = "AGUARDAR GATILHO";
+        classeCss = "sinal-neutro";
+        desc = `Ativo afastado do Strike em ${Math.abs(distanciaPct).toFixed(2)}%. Monitore aproximação de K.`;
+    }
+
+    badge.innerText = acao;
+    badge.className = `sinal-status ${classeCss}`;
+    texto.innerText = desc;
+}
+
 function renderizarGrafico() {
-    // Protegido: um erro aqui (ex: Plotly não carregado) não deve travar o resto do script.
     try {
         const ativoSelecionado = document.getElementById('ativo').value;
         const tipoOpcao = document.getElementById('tipoOpcao').value;
@@ -123,6 +176,10 @@ function renderizarGrafico() {
             listaS.push(S); listaPreco.push(valores.preco); listaGamma.push(valores.gamma); listaZomma.push(valores.zomma);
         }
 
+        // Avalia o sinal usando o preço spot atual do mercado
+        const gregasAtuais = calcularGregas(precoAtualMercado, K, dias, juros, vol, tipoOpcao);
+        avaliarSinalMercado(precoAtualMercado, K, gregasAtuais, tipoOpcao, dias);
+
         const traces = [
             { x: listaS, y: listaPreco, name: 'Prêmio da Opção', type: 'scatter', line: { color: '#ffb703', width: 2.5 }, xaxis: 'x', yaxis: 'y' },
             { x: listaS, y: listaGamma, name: 'Gamma', type: 'scatter', line: { color: '#06d6a0', width: 2 }, xaxis: 'x', yaxis: 'y2' },
@@ -138,18 +195,14 @@ function renderizarGrafico() {
             xaxis: { title: config.legenda, gridcolor: '#242b3d', anchor: 'y2' },
             yaxis: { title: 'Preço do Prêmio', gridcolor: '#242b3d', domain: [0.55, 1.0] },
             yaxis2: { title: 'Gamma', gridcolor: '#242b3d', domain: [0.0, 0.45] },
-            yaxis3: { title: 'Zomma', overlaying: 'y2', side: 'right', showgrid: false }
+            yaxis3: { title: 'Zomma', overlaying: 'y2', side: 'side', showgrid: false }
         };
         Plotly.newPlot('grafico', traces, layout);
     } catch (erro) {
         console.error('Falha ao desenhar o gráfico:', erro);
-        const caixaAvisos = document.getElementById('avisos');
-        caixaAvisos.style.display = 'block';
-        caixaAvisos.innerHTML = '⚠️ Não foi possível desenhar o gráfico. Veja o console para detalhes.';
     }
 }
 
-// --- DEBOUNCE: espera o usuário parar de digitar antes de recalcular ---
 function debounce(fn, atrasoMs) {
     let temporizador = null;
     return function(...args) {
@@ -159,7 +212,6 @@ function debounce(fn, atrasoMs) {
 }
 const renderizarGraficoComDebounce = debounce(renderizarGrafico, 300);
 
-// --- PREÇO AO VIVO (fonte gratuita, sem chave, CORS liberado) ---
 async function atualizarPrecoAoVivo() {
     const ativo = document.getElementById('ativo').value;
     const ticker = document.getElementById('live-price-ticker');
@@ -171,23 +223,16 @@ async function atualizarPrecoAoVivo() {
             if (dados && dados.xau && dados.xau.price) {
                 precoAtualMercado = parseFloat(dados.xau.price);
                 ticker.innerText = `LIVE: $ ${precoAtualMercado.toFixed(2)}`;
-                ticker.style.color = '#06d6a0';
-            } else {
-                throw new Error('Resposta sem preço');
-            }
+            } else { throw new Error(); }
         } catch (e) {
-            console.error('Falha ao buscar preço do ouro:', e);
             ticker.innerText = "Sincronizando...";
-            ticker.style.color = '#ffb703';
         }
     } else if (ativo === 'win') {
         precoAtualMercado = 125000 + (Math.random() * 200 - 100);
         ticker.innerText = `WIN: ${Math.round(precoAtualMercado)} pts`;
-        ticker.style.color = '#06d6a0';
     } else {
         precoAtualMercado = 31.00;
         ticker.innerText = "Simulado";
-        ticker.style.color = '#06d6a0';
     }
     renderizarGrafico();
 }
@@ -199,7 +244,7 @@ document.getElementById('ativo').addEventListener('change', function() {
     atualizarPrecoAoVivo();
 });
 
-document.getElementById('tipoOpcao').addEventListener('change', renderizarGrafico);
+document.getElementById('tipoOpcao').action = document.getElementById('tipoOpcao').addEventListener('change', renderizarGrafico);
 document.querySelectorAll('.painel-controles input').forEach(input =>
     input.addEventListener('input', renderizarGraficoComDebounce)
 );
