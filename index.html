@@ -14,9 +14,7 @@
         label { font-size: 11px; color: #8a99ad; margin-bottom: 5px; text-transform: uppercase; font-weight: bold; }
         input, select { background: #0d0e12; border: 1px solid #343e56; color: #fff; padding: 10px; border-radius: 4px; font-size: 14px; outline: none; }
         input:focus, select:focus { border-color: #ffb703; }
-        input.invalido { border-color: #ef476f; }
-        #avisos { display: none; background: #2a1418; border: 1px solid #ef476f; color: #ff9fb0; padding: 12px 15px; border-radius: 6px; margin-bottom: 15px; font-size: 13px; }
-        #grafico { background: #161a23; border-radius: 8px; padding: 10px; border: 1px solid #242b3d; }
+        #grafico { background: #161a23; border-radius: 8px; padding: 10px; border: 1px solid #242b3d; min-height: 650px; }
         .ticker-preco { background: #1c2333; color: #06d6a0; font-weight: bold; padding: 10px; border-radius: 4px; text-align: center; border: 1px solid #343e56; align-self: end; font-size: 15px; }
     </style>
 </head>
@@ -43,9 +41,8 @@
         <div class="controle"><label for="dias">Dias para Vencimento (T)</label><input type="number" id="dias" value="90"></div>
         <div class="controle"><label for="juros">Taxa de Juros (r %)</label><input type="number" id="juros" value="4.15" step="0.01"></div>
         <div class="controle"><label for="vol">Volatilidade Implícita (σ %)</label><input type="number" id="vol" value="14" step="0.1"></div>
-        <div class="ticker-preco" id="live-price-ticker">Sincronizando...</div>
+        <div class="ticker-preco" id="live-price-ticker">Carregando...</div>
     </div>
-    <div id="avisos"></div>
     <div id="grafico"></div>
 </div>
 <script>
@@ -61,7 +58,7 @@ function pdfNormal(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); 
 
 function calcularGregas(S, K, T_dias, r_pct, sigma_pct, tipo) {
     const T = T_dias / 365.0; const r = r_pct / 100.0; const sigma = sigma_pct / 100.0;
-    if (K <= 0 || T <= 0 || sigma <= 0) { return { preco: tipo === 'put' ? Math.max(0, K - S) : Math.max(0, S - K), gamma: 0, zomma: 0 }; }
+    if (K <= 0 || T <= 0 || sigma <= 0) return { preco: tipo === 'put' ? Math.max(0, K - S) : Math.max(0, S - K), gamma: 0, zomma: 0 };
     const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
     const d2 = d1 - sigma * Math.sqrt(T);
     const gamma = pdfNormal(d1) / (S * sigma * Math.sqrt(T));
@@ -78,26 +75,14 @@ const configuracaoAtivos = {
     xauusd:  { minX: 4200,   maxX: 4600,    passo: 4,     legenda: "Preço do Ouro (USD)" }
 };
 
-function validarCampos(K, dias, juros, vol) {
-    const erros = [];
-    if (isNaN(K) || K <= 0) erros.push('Preço de exercício inválido.');
-    if (isNaN(dias) || dias <= 0) erros.push('Dias para o vencimento inválidos.');
-    if (isNaN(vol) || vol <= 0) erros.push('Volatilidade inválida.');
-    const caixaAvisos = document.getElementById('avisos');
-    if (erros.length > 0) { caixaAvisos.style.display = 'block'; caixaAvisos.innerHTML = '⚠️ ' + erros.join('<br>'); return false; }
-    caixaAvisos.style.display = 'none'; return true;
-}
-
 function renderizarGrafico() {
     const ativoSelecionado = document.getElementById('ativo').value;
     const tipoOpcao = document.getElementById('tipoOpcao').value;
     const config = configuracaoAtivos[ativoSelecionado];
-    const K = parseFloat(document.getElementById('strike').value);
-    const dias = parseFloat(document.getElementById('dias').value);
-    const juros = parseFloat(document.getElementById('juros').value);
-    const vol = parseFloat(document.getElementById('vol').value);
-
-    if (!validarCampos(K, dias, juros, vol)) return;
+    const K = parseFloat(document.getElementById('strike').value) || 10;
+    const dias = parseFloat(document.getElementById('dias').value) || 10;
+    const juros = parseFloat(document.getElementById('juros').value) || 0;
+    const vol = parseFloat(document.getElementById('vol').value) || 10;
 
     const listaS = [], listaPreco = [], listaGamma = [], listaZomma = [];
     for (let S = config.minX; S <= config.maxX; S += config.passo) {
@@ -125,25 +110,21 @@ function renderizarGrafico() {
     Plotly.newPlot('grafico', traces, layout);
 }
 
-// NOVA CONEXÃO LIVRE DE BLOQUEIOS (CORS-FREE)
 async function atualizarPrecoAoVivo() {
     const ativo = document.getElementById('ativo').value;
     const ticker = document.getElementById('live-price-ticker');
     
     if (ativo === 'xauusd') {
         try {
-            // Puxa o preço do Ouro Spot via API aberta da CryptoCompare
             const resposta = await fetch('https://cryptocompare.com');
             const dados = await resposta.json();
-            const precoOuro = parseFloat(dados.USD);
-            
-            if (precoOuro && !isNaN(precoOuro)) {
-                precoAtualMercado = precoOuro;
-                ticker.innerText = `LIVE: $ ${precoOuro.toFixed(2)}`;
+            if (dados && dados.USD) {
+                precoAtualMercado = parseFloat(dados.USD);
+                ticker.innerText = `LIVE: $ ${precoAtualMercado.toFixed(2)}`;
                 ticker.style.color = '#06d6a0';
             }
         } catch (e) {
-            ticker.innerText = "Erro API. Reconectando...";
+            ticker.innerText = "Sincronizando...";
         }
     } else if (ativo === 'win') {
         precoAtualMercado = 125000 + (Math.random() * 200 - 100);
@@ -152,7 +133,7 @@ async function atualizarPrecoAoVivo() {
         precoAtualMercado = 31.00;
         ticker.innerText = "Simulado";
     }
-    renderizarGrafico(); // Garante o desenho do gráfico mesmo se a API falhar temporariamente
+    renderizarGrafico();
 }
 
 document.getElementById('ativo').addEventListener('change', function() {
@@ -165,3 +146,9 @@ document.getElementById('ativo').addEventListener('change', function() {
 document.getElementById('tipoOpcao').addEventListener('change', renderizarGrafico);
 document.querySelectorAll('input').forEach(input => input.addEventListener('input', renderizarGrafico));
 
+renderizarGrafico();
+setInterval(atualizarPrecoAoVivo, 5000);
+atualizarPrecoAoVivo();
+</script>
+</body>
+</html>
