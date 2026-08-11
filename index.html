@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Simulador Quantitativo de Opções</title>
-    <!-- Biblioteca de Gráficos Plotly (CDN correto) -->
-    <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
+    <!-- Biblioteca de Gráficos Plotly -->
+    <script src="https://plot.ly"></script>
     <style>
         body { background-color: #0d0e12; color: #e0e0e0; font-family: 'Segoe UI', Tahoma, sans-serif; margin: 0; padding: 20px; }
         .container { max-width: 1200px; margin: 0 auto; }
@@ -14,8 +14,6 @@
         label { font-size: 11px; color: #8a99ad; margin-bottom: 5px; text-transform: uppercase; font-weight: bold; }
         input, select { background: #0d0e12; border: 1px solid #343e56; color: #fff; padding: 10px; border-radius: 4px; font-size: 14px; outline: none; }
         input:focus, select:focus { border-color: #ffb703; }
-        input.invalido { border-color: #ef476f; }
-        #avisos { display: none; background: #2a1418; border: 1px solid #ef476f; color: #ff9fb0; padding: 12px 15px; border-radius: 6px; margin-bottom: 15px; font-size: 13px; }
         #grafico { background: #161a23; border-radius: 8px; padding: 10px; border: 1px solid #242b3d; min-height: 650px; }
         .ticker-preco { background: #1c2333; color: #06d6a0; font-weight: bold; padding: 10px; border-radius: 4px; text-align: center; border: 1px solid #343e56; align-self: end; font-size: 15px; }
     </style>
@@ -43,33 +41,31 @@
         <div class="controle"><label for="dias">Dias para Vencimento (T)</label><input type="number" id="dias" value="90"></div>
         <div class="controle"><label for="juros">Taxa de Juros (r %)</label><input type="number" id="juros" value="4.15" step="0.01"></div>
         <div class="controle"><label for="vol">Volatilidade Implícita (σ %)</label><input type="number" id="vol" value="14" step="0.1"></div>
-        <div class="ticker-preco" id="live-price-ticker">Carregando...</div>
+        <div class="ticker-preco" id="live-price-ticker">Conectando...</div>
     </div>
-    <div id="avisos"></div>
     <div id="grafico"></div>
 </div>
 <script>
+// Valores de segurança caso ocorra lentidão na internet
 let precoAtualMercado = 4420;
 
 function cdfNormal(x) {
     const b1 = 0.319381530, b2 = -0.356563782, b3 = 1.781477937, b4 = -1.821255978, b5 = 1.330274429;
     const p = 0.2316419, c = 0.39894228;
-    if (x >= 0) { let t = 1.0 / (1.0 + p * x); return (1.0 - c * Math.exp(-x * x / 2.0) * t * (t * (t * (t * (t * b5 + b4) + b3) + b2) + b1)); }
+    if (x >= 0) { let t = 1.0 / (1.0 + p * x); return (1.0 - c * Math.exp(-x * x / 2.0) * t * (t * (t * (t * (t * b5 + b4) + b3) + b2) + b1)); } 
     else { let t = 1.0 / (1.0 - p * x); return (c * Math.exp(-x * x / 2.0) * t * (t * (t * (t * (t * b5 + b4) + b3) + b2) + b1)); }
 }
 function pdfNormal(x) { return Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI); }
 
 function calcularGregas(S, K, T_dias, r_pct, sigma_pct, tipo) {
-    const T = T_dias / 365.0; const r = r_pct / 100.0; const sigma = sigma_pct / 100.0;
-    if (K <= 0 || T <= 0 || sigma <= 0) return { preco: tipo === 'put' ? Math.max(0, K - S) : Math.max(0, S - K), gamma: 0, zomma: 0 };
+    const T = Math.max(0.0001, T_dias / 365.0); 
+    const r = r_pct / 100.0; 
+    const sigma = Math.max(0.0001, sigma_pct / 100.0);
     const d1 = (Math.log(S / K) + (r + 0.5 * sigma * sigma) * T) / (sigma * Math.sqrt(T));
     const d2 = d1 - sigma * Math.sqrt(T);
     const gamma = pdfNormal(d1) / (S * sigma * Math.sqrt(T));
-    return {
-        preco: tipo === 'put' ? (K * Math.exp(-r * T) * cdfNormal(-d2) - S * cdfNormal(-d1)) : (S * cdfNormal(d1) - K * Math.exp(-r * T) * cdfNormal(d2)),
-        gamma: gamma,
-        zomma: gamma * ((d1 * d2 - 1) / sigma)
-    };
+    const preco = tipo === 'put' ? (K * Math.exp(-r * T) * cdfNormal(-d2) - S * cdfNormal(-d1)) : (S * cdfNormal(d1) - K * Math.exp(-r * T) * cdfNormal(d2));
+    return { preco: Math.max(0, preco), gamma: gamma, zomma: gamma * ((d1 * d2 - 1) / sigma) };
 }
 
 const configuracaoAtivos = {
@@ -78,44 +74,15 @@ const configuracaoAtivos = {
     xauusd:  { minX: 4200,   maxX: 4600,    passo: 4,     legenda: "Preço do Ouro (USD)" }
 };
 
-// --- VALIDAÇÃO DOS CAMPOS ---
-function validarCampos(K, dias, juros, vol) {
-    const erros = [];
-    const invalidos = { strike: false, dias: false, juros: false, vol: false };
-
-    if (isNaN(K) || K <= 0) { erros.push('O preço de exercício (K) precisa ser um número maior que zero.'); invalidos.strike = true; }
-    if (isNaN(dias) || dias <= 0) { erros.push('Os dias para o vencimento precisam ser maiores que zero.'); invalidos.dias = true; }
-    if (isNaN(vol) || vol <= 0) { erros.push('A volatilidade implícita precisa ser maior que zero.'); invalidos.vol = true; }
-    if (isNaN(juros)) { erros.push('A taxa de juros precisa ser um número.'); invalidos.juros = true; }
-
-    document.getElementById('strike').classList.toggle('invalido', invalidos.strike);
-    document.getElementById('dias').classList.toggle('invalido', invalidos.dias);
-    document.getElementById('juros').classList.toggle('invalido', invalidos.juros);
-    document.getElementById('vol').classList.toggle('invalido', invalidos.vol);
-
-    const caixaAvisos = document.getElementById('avisos');
-    if (erros.length > 0) {
-        caixaAvisos.style.display = 'block';
-        caixaAvisos.innerHTML = '⚠️ ' + erros.join('<br>⚠️ ');
-    } else {
-        caixaAvisos.style.display = 'none';
-        caixaAvisos.innerHTML = '';
-    }
-    return erros.length === 0;
-}
-
 function renderizarGrafico() {
-    // Protegido: um erro aqui (ex: Plotly não carregado) não deve travar o resto do script.
     try {
         const ativoSelecionado = document.getElementById('ativo').value;
         const tipoOpcao = document.getElementById('tipoOpcao').value;
         const config = configuracaoAtivos[ativoSelecionado];
-        const K = parseFloat(document.getElementById('strike').value);
-        const dias = parseFloat(document.getElementById('dias').value);
-        const juros = parseFloat(document.getElementById('juros').value);
-        const vol = parseFloat(document.getElementById('vol').value);
-
-        if (!validarCampos(K, dias, juros, vol)) return;
+        const K = Math.max(1, parseFloat(document.getElementById('strike').value) || 10);
+        const dias = Math.max(1, parseFloat(document.getElementById('dias').value) || 10);
+        const juros = parseFloat(document.getElementById('juros').value) || 0;
+        const vol = Math.max(1, parseFloat(document.getElementById('vol').value) || 10);
 
         const listaS = [], listaPreco = [], listaGamma = [], listaZomma = [];
         for (let S = config.minX; S <= config.maxX; S += config.passo) {
@@ -141,53 +108,33 @@ function renderizarGrafico() {
             yaxis3: { title: 'Zomma', overlaying: 'y2', side: 'right', showgrid: false }
         };
         Plotly.newPlot('grafico', traces, layout);
-    } catch (erro) {
-        console.error('Falha ao desenhar o gráfico:', erro);
-        const caixaAvisos = document.getElementById('avisos');
-        caixaAvisos.style.display = 'block';
-        caixaAvisos.innerHTML = '⚠️ Não foi possível desenhar o gráfico. Veja o console para detalhes.';
+    } catch (err) {
+        console.error("Erro no desenho:", err);
     }
 }
 
-// --- DEBOUNCE: espera o usuário parar de digitar antes de recalcular ---
-function debounce(fn, atrasoMs) {
-    let temporizador = null;
-    return function(...args) {
-        clearTimeout(temporizador);
-        temporizador = setTimeout(() => fn.apply(this, args), atrasoMs);
-    };
-}
-const renderizarGraficoComDebounce = debounce(renderizarGrafico, 300);
-
-// --- PREÇO AO VIVO (fonte gratuita, sem chave, CORS liberado) ---
 async function atualizarPrecoAoVivo() {
     const ativo = document.getElementById('ativo').value;
     const ticker = document.getElementById('live-price-ticker');
-
+    
     if (ativo === 'xauusd') {
         try {
-            const resposta = await fetch('https://xaus.com/api/v1/spot');
+            const resposta = await fetch('https://cryptocompare.com');
             const dados = await resposta.json();
-            if (dados && dados.xau && dados.xau.price) {
-                precoAtualMercado = parseFloat(dados.xau.price);
+            if (dados && dados.USD) {
+                precoAtualMercado = parseFloat(dados.USD);
                 ticker.innerText = `LIVE: $ ${precoAtualMercado.toFixed(2)}`;
                 ticker.style.color = '#06d6a0';
-            } else {
-                throw new Error('Resposta sem preço');
             }
         } catch (e) {
-            console.error('Falha ao buscar preço do ouro:', e);
-            ticker.innerText = "Sincronizando...";
-            ticker.style.color = '#ffb703';
+            ticker.innerText = "Reconectando...";
         }
     } else if (ativo === 'win') {
         precoAtualMercado = 125000 + (Math.random() * 200 - 100);
         ticker.innerText = `WIN: ${Math.round(precoAtualMercado)} pts`;
-        ticker.style.color = '#06d6a0';
     } else {
         precoAtualMercado = 31.00;
         ticker.innerText = "Simulado";
-        ticker.style.color = '#06d6a0';
     }
     renderizarGrafico();
 }
@@ -200,10 +147,9 @@ document.getElementById('ativo').addEventListener('change', function() {
 });
 
 document.getElementById('tipoOpcao').addEventListener('change', renderizarGrafico);
-document.querySelectorAll('.painel-controles input').forEach(input =>
-    input.addEventListener('input', renderizarGraficoComDebounce)
-);
+document.querySelectorAll('input').forEach(input => input.addEventListener('input', renderizarGrafico));
 
+// Força renderização inicial imediata para não depender da resposta da internet
 renderizarGrafico();
 setInterval(atualizarPrecoAoVivo, 5000);
 atualizarPrecoAoVivo();
