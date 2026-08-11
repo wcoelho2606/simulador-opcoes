@@ -3,8 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Simulador Quantitativo - Painéis Separados</title>
-    <!-- Biblioteca de Gráficos Plotly (CDN correto) -->
+    <title>Simulador Quantitativo - Multi-Ativos Live</title>
+    <!-- Biblioteca de Gráficos Plotly -->
     <script src="https://cdn.plot.ly/plotly-2.32.0.min.js"></script>
     <style>
         body {
@@ -20,7 +20,7 @@
         }
         .painel-controles {
             display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
             gap: 15px;
             background: #161a23;
             padding: 20px;
@@ -70,20 +70,31 @@
             padding: 10px;
             border: 1px solid #242b3d;
         }
+        .ticker-preco {
+            background: #1c2333;
+            color: #06d6a0;
+            font-weight: bold;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+            border: 1px solid #343e56;
+            align-self: end;
+            font-size: 15px;
+        }
     </style>
 </head>
 <body>
 
 <div class="container">
-    <h2>Simulador Quantitativo de Opções</h2>
+    <h2>Simulador Quantitativo de Opções (LIVE)</h2>
 
     <div class="painel-controles">
         <div class="controle">
             <label for="ativo">Ativo Alvo</label>
             <select id="ativo">
-                <option value="acoes">Ações Padrão (Ex: PETR4)</option>
+                <option value="xauusd">Ouro (XAU/USD - Live)</option>
                 <option value="win">Mini Índice (WIN - B3)</option>
-                <option value="xauusd">Ouro (XAU/USD - Forex)</option>
+                <option value="acoes">Ações Padrão (Ex: PETR4)</option>
             </select>
         </div>
         <div class="controle">
@@ -95,7 +106,7 @@
         </div>
         <div class="controle">
             <label for="strike">Preço de Exercício (K)</label>
-            <input type="number" id="strike" value="30" step="1">
+            <input type="number" id="strike" value="4400" step="1">
         </div>
         <div class="controle">
             <label for="dias">Dias para o Vencimento (T)</label>
@@ -107,17 +118,18 @@
         </div>
         <div class="controle">
             <label for="vol">Volatilidade Implícita (σ %)</label>
-            <input type="number" id="vol" value="8.7" step="0.1">
+            <input type="number" id="vol" value="14" step="0.1">
         </div>
+        <div class="ticker-preco" id="live-price-ticker">Sincronizando Preço...</div>
     </div>
 
     <div id="avisos"></div>
-
-    <!-- Espaço unificado dos gráficos empilhados -->
     <div id="grafico"></div>
 </div>
 
 <script>
+let precoAtualMercado = 4420; // Ponto de partida próximo do valor real atual do ouro
+
 // --- MOTOR MATEMÁTICO BLACK-SCHOLES ---
 function cdfNormal(x) {
     const b1 = 0.319381530, b2 = -0.356563782, b3 = 1.781477937, b4 = -1.821255978, b5 = 1.330274429;
@@ -137,7 +149,6 @@ function calcularGregas(S, K, T_dias, r_pct, sigma_pct, tipo) {
     const T = T_dias / 365.0;
     const r = r_pct / 100.0;
     const sigma = sigma_pct / 100.0;
-    // Proteção: strike inválido, vencimento ou volatilidade não positivos -> retorna valor intrínseco
     if (K <= 0 || T <= 0 || sigma <= 0) {
         const intrinseco = tipo === 'put' ? Math.max(0, K - S) : Math.max(0, S - K);
         return { preco: intrinseco, gamma: 0, zomma: 0 };
@@ -151,37 +162,22 @@ function calcularGregas(S, K, T_dias, r_pct, sigma_pct, tipo) {
     return { preco: (tipo === 'put' ? put : call), gamma, zomma };
 }
 
-// --- INTEGRAÇÃO DE ESCALAS POR ATIVO ---
+// --- ESCALAS ADAPTADAS E CORRIGIDAS ---
 const configuracaoAtivos = {
     acoes:   { minX: 20,     maxX: 40,      passo: 0.2,   legenda: "Preço em R$" },
     win:     { minX: 115000, maxX: 135000,  passo: 200,   legenda: "Pontos do Mini Índice" },
-    xauusd:  { minX: 2100,   maxX: 2500,    passo: 4,     legenda: "Preço do Ouro (USD)" }
+    xauusd:  { minX: 4200,   maxX: 4600,    passo: 4,     legenda: "Preço do Ouro (USD)" }
 };
 
 // --- VALIDAÇÃO DOS CAMPOS ---
-// Retorna a lista de mensagens de erro e marca visualmente os campos inválidos.
 function validarCampos(K, dias, juros, vol) {
     const erros = [];
-    const camposInvalidos = {
-        strike: false, dias: false, juros: false, vol: false
-    };
+    const camposInvalidos = { strike: false, dias: false, juros: false, vol: false };
 
-    if (isNaN(K) || K <= 0) {
-        erros.push('O preço de exercício (K) precisa ser um número maior que zero.');
-        camposInvalidos.strike = true;
-    }
-    if (isNaN(dias) || dias <= 0) {
-        erros.push('Os dias para o vencimento precisam ser maiores que zero.');
-        camposInvalidos.dias = true;
-    }
-    if (isNaN(vol) || vol <= 0) {
-        erros.push('A volatilidade implícita precisa ser maior que zero.');
-        camposInvalidos.vol = true;
-    }
-    if (isNaN(juros)) {
-        erros.push('A taxa de juros precisa ser um número.');
-        camposInvalidos.juros = true;
-    }
+    if (isNaN(K) || K <= 0) { erros.push('O preço de exercício (K) precisa ser um número maior que zero.'); camposInvalidos.strike = true; }
+    if (isNaN(dias) || dias <= 0) { erros.push('Os dias para o vencimento precisam ser maiores que zero.'); camposInvalidos.dias = true; }
+    if (isNaN(vol) || vol <= 0) { erros.push('A volatilidade implícita precisa ser maior que zero.'); camposInvalidos.vol = true; }
+    if (isNaN(juros)) { erros.push('A taxa de juros precisa ser um número.'); camposInvalidos.juros = true; }
 
     document.getElementById('strike').classList.toggle('invalido', camposInvalidos.strike);
     document.getElementById('dias').classList.toggle('invalido', camposInvalidos.dias);
@@ -196,7 +192,6 @@ function validarCampos(K, dias, juros, vol) {
         caixaAvisos.style.display = 'none';
         caixaAvisos.innerHTML = '';
     }
-
     return erros.length === 0;
 }
 
@@ -210,16 +205,9 @@ function renderizarGrafico() {
     const juros = parseFloat(document.getElementById('juros').value);
     const vol = parseFloat(document.getElementById('vol').value);
 
-    // Se algum campo estiver inválido, mostra o aviso e não tenta desenhar o gráfico
-    // com números que não fazem sentido (evita gráfico quebrado ou enganoso).
-    if (!validarCampos(K, dias, juros, vol)) {
-        return;
-    }
+    if (!validarCampos(K, dias, juros, vol)) return;
 
-    const listaS = [];
-    const listaPreco = [];
-    const listaGamma = [];
-    const listaZomma = [];
+    const listaS = [], listaPreco = [], listaGamma = [], listaZomma = [];
 
     for (let S = config.minX; S <= config.maxX; S += config.passo) {
         const valores = calcularGregas(S, K, dias, juros, vol, tipoOpcao);
@@ -229,104 +217,16 @@ function renderizarGrafico() {
         listaZomma.push(valores.zomma);
     }
 
-    const nomePreco = tipoOpcao === 'put' ? 'Preço da Put' : 'Preço da Call';
+    const tracePreco = { x: listaS, y: listaPreco, name: `Prêmio da ${tipoOpcao.toUpperCase()}`, type: 'scatter', line: { color: '#ffb703', width: 2.5 }, xaxis: 'x', yaxis: 'y' };
+    const traceGamma = { x: listaS, y: listaGamma, name: 'Gamma', type: 'scatter', line: { color: '#06d6a0', width: 2 }, xaxis: 'x', yaxis: 'y2' };
+    const traceZomma = { x: listaS, y: listaZomma, name: 'Zomma', type: 'scatter', line: { color: '#ef476f', width: 2, dash: 'dot' }, xaxis: 'x', yaxis: 'y3' };
 
-    // Painel 1 (Superior) - Valor da Opção
-    const tracePreco = {
-        x: listaS, y: listaPreco,
-        name: nomePreco, type: 'scatter',
-        line: { color: '#ffb703', width: 2.5 },
-        xaxis: 'x', yaxis: 'y'
-    };
+    const traceStrike1 = { x: [K, K], y: [0, Math.max(...listaPreco, 1)], name: 'Strike (K)', type: 'scatter', mode: 'lines', line: { color: '#ffffff', width: 1, dash: 'dash' }, xaxis: 'x', yaxis: 'y', showlegend: false };
+    const traceStrike2 = { x: [K, K], y: [Math.min(...listaZomma, 0), Math.max(...listaGamma, 0.001)], type: 'scatter', mode: 'lines', line: { color: '#ffffff', width: 1, dash: 'dash' }, xaxis: 'x', yaxis: 'y2', showlegend: false };
 
-    // Painel 2 (Inferior) - Métrica Gamma
-    const traceGamma = {
-        x: listaS, y: listaGamma,
-        name: 'Gamma', type: 'scatter',
-        line: { color: '#06d6a0', width: 2 },
-        xaxis: 'x', yaxis: 'y2'
-    };
-
-    // Painel 2 (Inferior) - Métrica Zomma (Eixo secundário direito para não distorcer o Gamma)
-    const traceZomma = {
-        x: listaS, y: listaZomma,
-        name: 'Zomma', type: 'scatter',
-        line: { color: '#ef476f', width: 2, dash: 'dot' },
-        xaxis: 'x', yaxis: 'y3'
-    };
+    const traceLive1 = { x: [precoAtualMercado, precoAtualMercado], y: [0, Math.max(...listaPreco, 1)], name: 'Preço Atual (Spot)', type: 'scatter', mode: 'lines', line: { color: '#ef233c', width: 2 }, xaxis: 'x', yaxis: 'y' };
+    const traceLive2 = { x: [precoAtualMercado, precoAtualMercado], y: [Math.min(...listaZomma, 0), Math.max(...listaGamma, 0.001)], type: 'scatter', mode: 'lines', line: { color: '#ef233c', width: 2 }, xaxis: 'x', yaxis: 'y2', showlegend: false };
 
     const layout = {
-        height: 650, // Altura estendida para caber os dois painéis confortavelmente
-        paper_bgcolor: '#161a23',
-        plot_bgcolor: '#161a23',
-        font: { color: '#8a99ad' },
-        showlegend: true,
-        legend: { orientation: 'h', x: 0, y: 1.08 },
-
-        // Eixo X compartilhado na base inferior
+        height: 650, paper_bgcolor: '#161a23', plot_bgcolor: '#161a23', font: { color: '#8a99ad' }, showlegend: true, legend: { orientation: 'h', x: 0, y: 1.08 },
         xaxis: { title: config.legenda, gridcolor: '#242b3d', anchor: 'y2' },
-
-        // Configuração do Painel Superior (Opção)
-        yaxis: {
-            title: 'Preço do Prêmio',
-            gridcolor: '#242b3d',
-            domain: [0.55, 1.0] // Ocupa a metade superior da tela
-        },
-
-        // Configuração do Painel Inferior (Gregas - Lado Esquerdo)
-        yaxis2: {
-            title: 'Gamma',
-            gridcolor: '#242b3d',
-            domain: [0.0, 0.45] // Ocupa a metade inferior da tela
-        },
-
-        // Configuração do Painel Inferior (Gregas - Lado Direito)
-        yaxis3: {
-            title: 'Zomma',
-            overlaying: 'y2',
-            side: 'right',
-            showgrid: false
-        }
-    };
-
-    Plotly.newPlot('grafico', [tracePreco, traceGamma, traceZomma], layout);
-}
-
-// --- DEBOUNCE: espera o usuário parar de digitar antes de recalcular ---
-function debounce(fn, atrasoMs) {
-    let temporizador = null;
-    return function(...args) {
-        clearTimeout(temporizador);
-        temporizador = setTimeout(() => fn.apply(this, args), atrasoMs);
-    };
-}
-const renderizarGraficoComDebounce = debounce(renderizarGrafico, 300);
-
-// ALTERNA REQUISITOS AUTOMÁTICOS CONFORME ATIVO SELECIONADO
-document.getElementById('ativo').addEventListener('change', function() {
-    if (this.value === 'win') {
-        document.getElementById('strike').value = 125000;
-        document.getElementById('vol').value = 22;
-    } else if (this.value === 'xauusd') {
-        document.getElementById('strike').value = 2300;
-        document.getElementById('vol').value = 14;
-    } else {
-        document.getElementById('strike').value = 30;
-        document.getElementById('vol').value = 8.7;
-    }
-    renderizarGrafico();
-});
-
-document.getElementById('tipoOpcao').addEventListener('change', renderizarGrafico);
-
-// Campos numéricos usam debounce (o usuário digita várias teclas seguidas)
-document.querySelectorAll('.painel-controles input').forEach(input =>
-    input.addEventListener('input', renderizarGraficoComDebounce)
-);
-
-renderizarGrafico();
-</script>
-
-</body>
-</html>
-
